@@ -128,14 +128,16 @@ export default function FamilyDashboard({ navigation, route }: FamilyDashboardPr
           console.log('Family data fetched:', data);
         } else {
           console.warn('FamilyDashboard received without userId in route.params.');
-          Alert.alert('त्रुटि', 'उपयोगकर्ता की जानकारी उपलब्ध नहीं है। कृपया पुनः लॉग इन करें।');
+          // Silently navigate back instead of showing error alert
+          console.log('🔄 No userId found, redirecting to login...');
           navigation.navigate('Login');
         }
       } catch (error) {
         console.error('Error fetching family data:', error);
         // If server fetch fails, try to load from local storage
         await loadLatestPhotoUrl();
-        Alert.alert('त्रुटि', 'परिवार की जानकारी लोड नहीं हो पाई।');
+        // Don't show alert for network errors, just log
+        console.log('⚠️ Family data load failed, using cached data if available');
       } finally {
         setLoading(false);
       }

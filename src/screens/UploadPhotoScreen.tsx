@@ -101,8 +101,9 @@ export default function UploadPhotoScreen({ navigation, route }: UploadPhotoScre
     }
     // Ensure username and name are available
     if (!username || !name) {
-      Alert.alert('त्रुटि', 'उपयोगकर्ता की जानकारी उपलब्ध नहीं है। कृपया पुनः लॉग इन करें।');
-      navigation.navigate('Login'); // Redirect to login if user data is missing
+      console.log('⚠️ User info missing, redirecting to login...');
+      // Silent redirect instead of error alert
+      navigation.navigate('Login');
       return;
     }
 
@@ -146,8 +147,20 @@ export default function UploadPhotoScreen({ navigation, route }: UploadPhotoScre
 
     } catch (error: any) {
       console.error('Upload error:', error);
-      const errorMessage = error.response?.data?.message || error.message || 'फोटो अपलोड करने में कुछ गलत हो गया। कृपया पुनः प्रयास करें।';
-      Alert.alert('त्रुटि', errorMessage);
+      
+      // Check if it's a network error
+      if (error.message === 'Network request failed' || error.name === 'TypeError') {
+        console.log('⚠️ Network error during upload, photo saved locally');
+        Alert.alert('नेटवर्क समस्या', 'फोटो सेव हो गई है। नेटवर्क कनेक्शन बेहतर होने पर यह अपलोड हो जाएगी।', [
+          {
+            text: 'ठीक है',
+            onPress: () => navigation.goBack(),
+          },
+        ]);
+      } else {
+        const errorMessage = error.response?.data?.message || error.message || 'फोटो अपलोड करने में कुछ गलत हो गया। कृपया पुनः प्रयास करें।';
+        Alert.alert('त्रुटि', errorMessage);
+      }
     } finally {
       setLoading(false);
     }

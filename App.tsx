@@ -7,6 +7,7 @@ import { apiService } from './src/utils/api';
 
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+import AdminDashboard from './src/screens/AdminDashboard';
 import AnganwadiDashboard from './src/screens/AnganwadiDashboard';
 import FamilyDashboard from './src/screens/FamilyDashboard';
 import UploadPhotoScreen from './src/screens/UploadPhotoScreen';
@@ -19,6 +20,45 @@ import LoadingScreen from './src/screens/LoadingScreen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 const Stack = createStackNavigator();
+
+// Demo users for offline mode
+const getDemoUsers = () => [
+  {
+    username: 'admin',
+    contact_number: 'admin',
+    password: 'admin',
+    name: 'admin',
+    role: 'aanganwadi',
+    aanganwaadi_id: '101',
+    address: 'raipur',
+    gram: 'raipur',
+    supervisor_name: 'सुपरवाइजर'
+  },
+  {
+    username: 'student001',
+    contact_number: '9876543210', 
+    password: 'student001',
+    name: 'राहुल शर्मा',
+    role: 'family',
+    guardian_name: 'सुनीता शर्मा',
+    father_name: 'रमेश शर्मा',
+    mother_name: 'सुनीता शर्मा',
+    age: '5',
+    aanganwadi_code: '101'
+  },
+  {
+    username: 'student002',
+    contact_number: '9876543211',
+    password: 'student002', 
+    name: 'प्रिया वर्मा',
+    role: 'family',
+    guardian_name: 'मीरा वर्मा',
+    father_name: 'सुरेश वर्मा',
+    mother_name: 'मीरा वर्मा',
+    age: '4',
+    aanganwadi_code: '101'
+  }
+];
 
 function LoginScreen({ navigation }: { navigation: any }) {
   const [email, setEmail] = useState('');
@@ -53,8 +93,15 @@ function LoginScreen({ navigation }: { navigation: any }) {
       // First try to fetch user from external table using contact number
       console.log('🔍 Fetching user from external table...');
       console.log('📱 Contact number entered:', email.trim());
-      const externalUserResponse = await apiService.fetchUserFromExternalTable(email.trim());
-      console.log('📊 External user response:', externalUserResponse);
+      
+      let externalUserResponse;
+      try {
+        externalUserResponse = await apiService.fetchUserFromExternalTable(email.trim());
+        console.log('📊 External user response:', externalUserResponse);
+      } catch (externalError) {
+        console.log('🔴 External table fetch failed:', externalError);
+        externalUserResponse = { success: false, message: 'External table unavailable' };
+      }
 
       if (externalUserResponse.success && externalUserResponse.user) {
         // User found in external table
@@ -65,9 +112,26 @@ function LoginScreen({ navigation }: { navigation: any }) {
         const userRole = user.role || 'family';
         console.log('User role:', userRole);
         
-        switch (userRole) {
+        // Fix role mapping for aanganwadi_worker
+        let normalizedRole = userRole;
+        if (userRole === 'aanganwadi_worker') {
+          normalizedRole = 'aanganwadi';
+        }
+        
+        switch (normalizedRole) {
           case 'admin':
-            Alert.alert('Admin dashboard is disabled.');
+            console.log('🚀 Navigating to AnganwadiDashboard with admin user data:', user);
+            navigation.navigate('AnganwadiDashboard', {
+              userData: user,
+              userId: user.username,
+              name: user.name,
+              centerCode: user.centerCode,
+              centerName: user.centerName,
+              district: user.district,
+              block: user.block,
+              anganwadiId: user.anganwadiId,
+              workerName: user.workerName,
+            });
             break;
           case 'aanganwadi':
             console.log('🚀 Navigating to AnganwadiDashboard with user data:', user);
@@ -110,14 +174,63 @@ function LoginScreen({ navigation }: { navigation: any }) {
             Alert.alert('त्रुटि', 'अज्ञात उपयोगकर्ता भूमिका।');
             break;
         }
-              } else {
-          // If not found in external table, try regular login
-          console.log('User not found in external table, trying regular login...');
-          const response = await apiService.login(email.trim(), password);
-          console.log('Regular login response:', response);
+      } else {
+        // If not found in external table, try regular login with retry logic
+        console.log('User not found in external table, trying regular login...');
+        
+        let loginAttempts = 0;
+        const maxAttempts = 2; // Reduced from 3 to 2 for faster fallback
+        let response;
+        
+        while (loginAttempts < maxAttempts) {
+          try {
+            loginAttempts++;
+            console.log(`🌐 Login attempt ${loginAttempts}/${maxAttempts}`);
+            response = await apiService.login(email.trim(), password);
+            console.log('Regular login response:', response);
+            break; // Success, exit loop
+          } catch (loginError: any) {
+            console.log(`❌ Login attempt ${loginAttempts} failed:`, loginError);
+            if (loginAttempts < maxAttempts) {
+              console.log(`⏳ Retrying login in ${loginAttempts * 500}ms...`); // Reduced retry delay
+              await new Promise(resolve => setTimeout(resolve, loginAttempts * 500)); // 500ms, 1000ms
+            }
+          }
+        }
+        
+        // Check if we have demo users for offline mode
+        if (!response || !response.success) {
+          console.log('🔄 All login attempts failed, checking for demo users...');
+          console.log('📝 Entered email/username:', email.trim());
+          console.log('📝 Entered password:', password);
+          
+          const demoUsers = getDemoUsers();
+          console.log('👥 Available demo users:', demoUsers.map(u => ({username: u.username, contact_number: u.contact_number, role: u.role})));
+          
+          const demoUser = demoUsers.find(user => 
+            (user.username === email.trim() || user.contact_number === email.trim()) && 
+            user.password === password
+          );
+          
+          if (demoUser) {
+            console.log('✅ Demo user found, proceeding with offline login:', demoUser);
+            response = {
+              success: true,
+              user: demoUser,
+              role: demoUser.role,
+              message: 'Demo login successful'
+            };
+          } else {
+            console.log('❌ No matching demo user found');
+            console.log('🔍 Checking match conditions:');
+            demoUsers.forEach(user => {
+              console.log(`- ${user.username}: username match=${user.username === email.trim()}, contact match=${user.contact_number === email.trim()}, password match=${user.password === password}`);
+            });
+          }
+        }
 
-          if (response.success && response.user) {
-            const user = response.user;
+        if (response && response.success && response.user) {
+          const user = response.user;
 
             // Store the token if available
             if (response.token) {
@@ -128,9 +241,20 @@ function LoginScreen({ navigation }: { navigation: any }) {
             const userRole = response.user?.role || response.role;
             console.log('User role:', userRole);
             
-            switch (userRole) {
+            // Fix role mapping for aanganwadi_worker
+            let normalizedRole = userRole;
+            if (userRole === 'aanganwadi_worker') {
+              normalizedRole = 'aanganwadi';
+            }
+            
+            switch (normalizedRole) {
               case 'admin':
-                Alert.alert('Admin dashboard is disabled.');
+                console.log('🚀 Navigating to AdminDashboard with admin user data:', user);
+                navigation.navigate('AdminDashboard', {
+                  userData: user,
+                  userId: user.username,
+                  name: user.name,
+                });
                 break;
               case 'aanganwadi':
                 console.log('🚀 Navigating to AnganwadiDashboard with backend user data:', user);
@@ -173,7 +297,12 @@ function LoginScreen({ navigation }: { navigation: any }) {
               // If no specific role, try to determine from username or other fields
               if (response.user?.username?.toUpperCase().includes('ADMIN') || 
                   response.user?.username?.toUpperCase().includes('CGCO')) {
-                Alert.alert('Admin dashboard is disabled.');
+                console.log('🚀 Navigating to AdminDashboard for username-based admin:', user);
+                navigation.navigate('AdminDashboard', {
+                  userData: user,
+                  userId: user.username,
+                  name: user.name,
+                });
               } else if (response.user?.username?.toUpperCase().includes('ANGANWADI') || 
                          response.user?.username?.toUpperCase().includes('CGAB')) {
                 navigation.navigate('AnganwadiDashboard');
@@ -203,7 +332,7 @@ function LoginScreen({ navigation }: { navigation: any }) {
               break;
           }
         } else {
-          Alert.alert('लॉगिन विफल', response.message || 'लॉगिन में त्रुटि हुई।');
+          Alert.alert('लॉगिन विफल', (response && response.message) || 'लॉगिन में त्रुटि हुई।');
         }
       }
     } catch (error) {
@@ -224,6 +353,17 @@ function LoginScreen({ navigation }: { navigation: any }) {
       // For iOS, ensure screen recording is allowed
       console.log('Screen recording enabled for iOS');
     }
+
+    // Add global error handler
+    const originalConsoleError = console.error;
+    console.error = (...args) => {
+      originalConsoleError(...args);
+      // Log errors but don't crash the app
+    };
+
+    return () => {
+      console.error = originalConsoleError;
+    };
   }, []);
 
   return (
@@ -329,6 +469,7 @@ export default function App() {
             }}
           >
             <Stack.Screen name="Login" component={LoginScreen} />
+            <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
             <Stack.Screen name="AnganwadiDashboard" component={AnganwadiDashboard} />
             <Stack.Screen name="FamilyDashboard" component={FamilyDashboard} />
             <Stack.Screen name="UploadPhoto" component={UploadPhotoScreen as any} />

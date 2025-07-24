@@ -96,29 +96,71 @@ class ApiService {
     return headers;
   }
 
-  private async makeRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async makeRequest<T>(endpoint: string, options: RequestInit = {}, retries: number = 3): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
     const config: RequestInit = {
       ...options,
       headers: this.getHeaders(),
     };
 
-    try {
-      const response = await fetch(url, config);
-      if (!response.ok) {
-        const errorText = await response.text();
-        try {
-          const errorJson = JSON.parse(errorText);
-          throw new Error(errorJson.message || `HTTP error: ${response.status}`);
-        } catch {
-          throw new Error(`HTTP error: ${response.status}`);
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`🌐 API Request (Attempt ${attempt}/${retries}): ${config.method || 'GET'} ${url}`);
+        
+        // Create AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // Reduced from 10000 to 3000 (3 seconds)
+        
+        const response = await fetch(url, {
+          ...config,
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+        
+        console.log(`📡 API Response: ${response.status} ${response.statusText}`);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`❌ API Error: ${response.status} - ${errorText}`);
+          
+          try {
+            const errorJson = JSON.parse(errorText);
+            throw new Error(errorJson.message || `HTTP error: ${response.status}`);
+          } catch {
+            throw new Error(`HTTP error: ${response.status} - ${response.statusText}`);
+          }
         }
+        
+        const result = await response.json();
+        console.log(`✅ API Success:`, result);
+        return result;
+      } catch (error: any) {
+        console.error(`❌ API request failed (Attempt ${attempt}/${retries}):`, error);
+        
+        // If this is the last attempt, throw the error
+        if (attempt === retries) {
+          // Provide user-friendly error messages
+          if (error instanceof TypeError && error.message.includes('network')) {
+            throw new Error('नेटवर्क कनेक्शन की समस्या है। कृपया अपना इंटरनेट कनेक्शन जांचें।');
+          }
+          
+          if (error.name === 'AbortError') {
+            throw new Error('अनुरोध का समय समाप्त हो गया। कृपया पुनः प्रयास करें।');
+          }
+          
+          throw error;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = Math.min(Math.pow(2, attempt - 1) * 500, 2000); // 0.5s, 1s, 2s max
+        console.log(`⏳ Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
-      return await response.json();
-    } catch (error) {
-      console.error('API request failed:', error);
-      throw error;
     }
+    
+    // This should never be reached, but TypeScript requires it
+    throw new Error('All retry attempts failed');
   }
 
   async fetchUserFromExternalTable(contactNumber: string): Promise<any> {
@@ -202,7 +244,7 @@ class ApiService {
   }
 
   async logout(): Promise<{ success: boolean; message: string }> {
-    const response = await this.makeRequest('/logout', { method: 'POST' });
+    const response = await this.makeRequest<{ success: boolean; message: string }>('/logout', { method: 'POST' });
     if (response.success) this.clearToken();
     return response;
   }
@@ -225,6 +267,10 @@ class ApiService {
 
   async getFamilyDetails(familyId: string): Promise<FamilyData> {
     return this.makeRequest<FamilyData>(`/families/${familyId}`);
+  }
+
+  async getFamilyByUserId(userId: string): Promise<FamilyData> {
+    return this.makeRequest<FamilyData>(`/families/user/${userId}`);
   }
 
   async updateFamily(
@@ -270,6 +316,154 @@ class ApiService {
     if (!res.ok) throw new Error(await res.text());
     return await res.json();
   }
+
+  async testConnection(): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await fetch(`${this.baseURL}/health`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        return {
+          success: false,
+          message: `Server responded with status: ${response.status}`,
+        };
+      }
+
+      const data = await response.json();
+      return {
+        success: true,
+        message: 'Connection successful',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Connection failed: ${error}`,
+      };
+    }
+  }
+
+  // Add missing methods for AnganwadiDashboard
+  async searchFamilies(query: string = ''): Promise<FamilyData[]> {
+    try {
+      const endpoint = query ? `/search?query=${encodeURIComponent(query)}` : '/search';
+      console.log('🔍 Fetching families from:', endpoint);
+      return this.makeRequest<FamilyData[]>(endpoint);
+    } catch (error) {
+      console.error('Error in searchFamilies:', error);
+      return [];
+    }
+  }
+
+  async getDashboardStats(): Promise<{
+    totalFamilies: number;
+    distributedPlants: number;
+    activeFamilies: number;
+    latestStudentName?: string;
+  }> {
+    try {
+      console.log('📊 Fetching dashboard stats from /search2...');
+      const response = await this.makeRequest<any>('/search2');
+      
+      // Handle different response formats
+      if (response.totalFamilies !== undefined) {
+        return {
+          totalFamilies: response.totalFamilies || 0,
+          distributedPlants: response.distributedPlants || 0,
+          activeFamilies: response.activeFamilies || 0,
+          latestStudentName: response.latestStudentName,
+        };
+      } else {
+        // If /search2 doesn't exist, fallback to /search and calculate stats
+        console.log('⚠️ /search2 not available, using /search as fallback');
+        const families = await this.searchFamilies();
+        return {
+          totalFamilies: families.length,
+          distributedPlants: families.filter((f: any) => f.plantDistributed || f.plant_photo).length,
+          activeFamilies: families.length,
+          latestStudentName: families.length > 0 ? families[0].childName : undefined,
+        };
+      }
+    } catch (error) {
+      console.error('Error in getDashboardStats:', error);
+      return {
+        totalFamilies: 0,
+        distributedPlants: 0,
+        activeFamilies: 0,
+      };
+    }
+  }
 }
 
 export const apiService = new ApiService(API_BASE_URL);
+
+// Export additional utility functions
+export const fetchTotalFamiliesAndPhotos = async (): Promise<{ totalFamilies: number; totalPhotos: number }> => {
+  try {
+    console.log('🔄 Fetching real stats from server...');
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for stats
+    
+    const response = await fetch(`${API_BASE_URL}/stats`, {
+      method: 'GET',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.log(`⚠️ Server response not OK: ${response.status} ${response.statusText}`);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Real stats data received:', data);
+    
+    // Validate data structure
+    if (typeof data.totalFamilies === 'number' && typeof data.totalPhotos === 'number') {
+      return {
+        totalFamilies: data.totalFamilies,
+        totalPhotos: data.totalPhotos,
+      };
+    } else {
+      console.log('⚠️ Invalid data structure received, using fallback');
+      throw new Error('Invalid data structure from server');
+    }
+  } catch (error) {
+    console.error('❌ Error fetching real stats, will use fallback:', error);
+    throw error; // Re-throw to let calling code handle fallback
+  }
+};
+
+// Add a function to check server connectivity
+export const checkServerConnectivity = async (): Promise<boolean> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // Reduced from 5000 to 2000 (2 seconds)
+    
+    const response = await fetch(`${API_BASE_URL}/health`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch (error) {
+    console.warn('Server connectivity check failed:', error);
+    return false;
+  }
+};
+
+// Fallback data when server is not available
+export const getFallbackData = () => ({
+  families: [],
+  stats: { totalPlants: 0, distributedPlants: 0, activeFamilies: 0 },
+  notifications: [],
+});

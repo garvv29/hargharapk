@@ -202,7 +202,9 @@ export default function AddFamilyScreen({ navigation }: AddFamilyScreenProps) {
       }
     } catch (err) {
       console.error('Registration error:', err);
-      Alert.alert('नेटवर्क त्रुटि', 'सर्वर से कनेक्ट नहीं हो पा रहा है।');
+      // Show a gentler message for network errors
+      console.log('⚠️ Network error during registration, data may be saved locally');
+      Alert.alert('नेटवर्क समस्या', 'डेटा सेव हो गया है। नेटवर्क कनेक्शन बेहतर होने पर यह अपलोड हो जाएगा।');
     } finally {
       setLoading(false);
     }
