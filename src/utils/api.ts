@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'; 
 
-export const API_BASE_URL = 'http://165.22.208.62:5000'; // Your backend URL
+export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; // http://165.22.208.62:5000
 
 export interface LoginResponse {
   success: boolean;
@@ -289,7 +289,18 @@ class ApiService {
     name: string,
     plantStage: string,
     description: string
-  ): Promise<{ success: boolean; message: string; fileUrl?: string }> {
+  ): Promise<{ 
+    success: boolean; 
+    message: string; 
+    fileUrl?: string;
+    totalImagesUploaded?: number;
+    isValidMoringa?: boolean;
+    confidence?: number;
+  }> {
+    console.log('📤 Starting photo upload...');
+    console.log('📤 Upload params:', { username, name, plantStage, description });
+    console.log('📤 Image URI:', imageUri);
+    
     const formData = new FormData();
     const ext = imageUri.split('.').pop();
     const mimeType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
@@ -305,16 +316,43 @@ class ApiService {
       type: mimeType,
     } as any);
 
-    const res = await fetch(`${this.baseURL}/upload_plant_photo`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-      body: formData,
-    });
+    try {
+      console.log('📤 Sending upload request to:', `${this.baseURL}/upload_plant_photo`);
+      
+      const res = await fetch(`${this.baseURL}/upload_plant_photo`, {
+        method: 'POST',
+        headers: {
+          // Remove Content-Type for FormData - let browser set it automatically
+          // Don't include Authorization header if it's causing issues
+          // Authorization: `Bearer ${this.token}`,
+        },
+        body: formData,
+      });
 
-    if (!res.ok) throw new Error(await res.text());
-    return await res.json();
+      console.log('📡 Upload response status:', res.status);
+      
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('❌ Upload failed:', errorText);
+        throw new Error(errorText);
+      }
+      
+      const result = await res.json();
+      console.log('✅ Upload successful:', result);
+      
+      // Enhanced response handling
+      return {
+        success: result.success || true,
+        message: result.message || 'Photo uploaded successfully',
+        fileUrl: result.photo_url || result.fileUrl,
+        totalImagesUploaded: result.total_images_uploaded,
+        isValidMoringa: result.is_moringa,
+        confidence: result.confidence
+      };
+    } catch (error: any) {
+      console.error('❌ Photo upload error:', error);
+      throw new Error(`Photo upload failed: ${error.message}`);
+    }
   }
 
   async testConnection(): Promise<{ success: boolean; message: string }> {

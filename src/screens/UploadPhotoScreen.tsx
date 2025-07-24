@@ -6,7 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 
 // Assuming you have an apiService with an uploadPhoto method.
 // You will need to define this in your src/utils/api.ts
-import { apiService } from '../utils/api'; 
+import { apiService, API_BASE_URL } from '../utils/api'; 
 
 
 interface UploadResponse {
@@ -195,9 +195,12 @@ export default function UploadPhotoScreen({ navigation, route }: UploadPhotoScre
           {selectedImage ? (
             <View style={styles.imagePreview}>
               <Image source={{ uri: selectedImage }} style={styles.selectedImage} resizeMode="contain" />
+              
               <Button 
                 mode="outlined" 
-                onPress={() => setSelectedImage(null)}
+                onPress={() => {
+                  setSelectedImage(null);
+                }}
                 style={styles.changeButton}
                 textColor="#4CAF50"
               >
@@ -285,9 +288,8 @@ export default function UploadPhotoScreen({ navigation, route }: UploadPhotoScre
             style={styles.uploadButton}
             buttonColor="#2E7D32"
             loading={loading}
-            // Button is disabled if loading, no image selected, no plant stage selected,
-            // or if username/name are empty (which should be handled by validation above too)
-            disabled={loading || !selectedImage || !plantStage || !username || !name}
+            // Button is only disabled if loading, no image selected, or no plant stage selected
+            disabled={loading || !selectedImage || !plantStage}
             onPress={handleUpload}
           >
             {loading ? 'अपलोड हो रहा है...' : 'फोटो अपलोड करें'}
@@ -410,6 +412,59 @@ const styles = StyleSheet.create({
   },
   changeButton: {
     borderRadius: 8,
+  },
+  aiCheckButton: {
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+  aiButtonsContainer: {
+    flexDirection: 'row',
+    width: '100%',
+    marginBottom: 15,
+  },
+  skipAiButton: {
+    borderRadius: 8,
+    borderColor: '#4CAF50',
+  },
+  aiResultContainer: {
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+    width: '100%',
+  },
+  aiSuccessContainer: {
+    backgroundColor: '#E8F5E8',
+    borderColor: '#4CAF50',
+    borderWidth: 1,
+  },
+  aiErrorContainer: {
+    backgroundColor: '#FFEBEE',
+    borderColor: '#F44336',
+    borderWidth: 1,
+  },
+  aiResultText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  aiSuccessText: {
+    color: '#2E7D32',
+  },
+  aiErrorText: {
+    color: '#C62828',
+  },
+  aiConfidenceText: {
+    fontSize: 14,
+    color: '#666666',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  aiMessageText: {
+    fontSize: 12,
+    color: '#666666',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   stageContainer: {
     padding: 20,

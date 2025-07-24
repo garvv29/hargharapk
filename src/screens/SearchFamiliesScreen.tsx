@@ -366,29 +366,30 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
     }
   };
 
-  // New function to handle photo upload navigation
-  const handlePhotoUpload = () => {
-    if (selectedFamilyDetails) {
-      console.log('📸 Opening UploadPhotoScreen for:', selectedFamilyDetails.childName);
-      setModalVisible(false); // Close the modal first
-      navigation.navigate('UploadPhoto', {
-        username: selectedFamilyDetails.username || selectedFamilyDetails.mobileNumber,
-        name: selectedFamilyDetails.childName,
-        onPhotoUpload: (uploadedImageUri: string, predictionMessage?: string, isMoringa?: boolean | null, confidence?: number | null) => {
-          console.log('🎉 Photo uploaded successfully for:', selectedFamilyDetails.childName);
-          console.log('📷 Uploaded image URI:', uploadedImageUri);
-          console.log('🤖 Prediction:', predictionMessage);
-          console.log('🌱 Is Moringa:', isMoringa);
-          console.log('📊 Confidence:', confidence);
-          
-          // Refresh data to show new photo
-          console.log('🔄 Refreshing family data to show new photo...');
+  // Add this function to handle photo upload success callback
+  const handlePhotoUpload = useCallback((username: string, childName: string) => {
+    console.log('📸 Opening photo upload for:', { username, childName });
+    
+    // Close modal first
+    setSelectedFamilyDetails(null);
+    setModalVisible(false);
+    
+    // Navigate to upload screen with callback
+    navigation.navigate('UploadPhoto', {
+      username: username || selectedFamilyDetails?.mobileNumber,
+      name: childName,
+      onPhotoUpload: (result: any) => {
+        console.log('✅ Photo upload completed:', result);
+        
+        // Refresh the family data to show updated photo
+        if (searchQuery) {
+          console.log('🔄 Refreshing family data after photo upload...');
           const abortController = new AbortController();
           fetchFamilies(searchQuery, abortController.signal);
         }
-      });
-    }
-  };
+      }
+    });
+  }, [navigation, selectedFamilyDetails, searchQuery]);
 
   const handleCallFamily = (mobileNumber: string) => {
     if (!mobileNumber) {
@@ -657,7 +658,7 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                             icon="camera" 
                             style={styles.photoButton}
                             textColor="#4CAF50"
-                            onPress={handlePhotoUpload}
+                            onPress={() => handlePhotoUpload(selectedFamilyDetails?.mobileNumber || '', selectedFamilyDetails?.childName || '')}
                           >
                             नई फोटो अपलोड करें
                           </Button>
@@ -671,7 +672,7 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                           icon="camera-plus" 
                           style={styles.uploadButton}
                           buttonColor="#4CAF50"
-                          onPress={handlePhotoUpload}
+                          onPress={() => handlePhotoUpload(selectedFamilyDetails?.mobileNumber || '', selectedFamilyDetails?.childName || '')}
                         >
                           पहली फोटो अपलोड करें
                         </Button>
@@ -738,7 +739,7 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                             icon="camera" 
                             style={styles.photoButton}
                             textColor="#4CAF50"
-                            onPress={handlePhotoUpload}
+                            onPress={() => handlePhotoUpload(selectedFamilyDetails?.mobileNumber || '', selectedFamilyDetails?.childName || '')}
                           >
                             नई फोटो अपलोड करें
                           </Button>
@@ -752,7 +753,7 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                           icon="camera-plus" 
                           style={styles.uploadButton}
                           buttonColor="#4CAF50"
-                          onPress={handlePhotoUpload}
+                          onPress={() => handlePhotoUpload(selectedFamilyDetails?.mobileNumber || '', selectedFamilyDetails?.childName || '')}
                         >
                           पहली फोटो अपलोड करें
                         </Button>
