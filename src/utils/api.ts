@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'; 
 
-export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; // http://165.22.208.62:5000
-
+//export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; // 
+export const API_BASE_URL = 'http://165.22.208.62:5000';
 export interface LoginResponse {
   success: boolean;
   message: string;

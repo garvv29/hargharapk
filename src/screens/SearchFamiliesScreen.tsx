@@ -182,12 +182,12 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
     const unsubscribe = navigation.addListener('focus', () => {
       console.log('👁️ Screen focused - refreshing data to show latest photos...');
       const abortController = new AbortController();
-      // Reuse the same fetch logic 
+      // Refresh data to show any new photos that were uploaded
       fetchFamilies(searchQuery, abortController.signal);
     });
 
     return unsubscribe;
-  }, [navigation, searchQuery]); // Remove fetchFamilies from dependencies to avoid circular reference
+  }, [navigation, searchQuery]);
 
   const fetchFamilies = useCallback(async (query: string, signal: AbortSignal) => {
     setLoading(true);
@@ -294,14 +294,59 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
 
   // Modified handleViewDetails to fetch full data and open modal
   const handleViewDetails = async (familyId: string) => {
-    setDetailsLoading(true); // Start loading for modal
-    const details = await apiService.getFamilyDetails(familyId);
-    setDetailsLoading(false); // Stop loading
-    if (details) {
-      setSelectedFamilyDetails(details);
-      setModalVisible(true);
-    } else {
-      // Error message is already handled in apiService.getFamilyDetails
+    console.log('👁️ Opening full details for family ID:', familyId);
+    
+    // Find the family in current list to get basic info and photo
+    const currentFamily = filteredFamilies.find(f => f.id === familyId);
+    if (!currentFamily) {
+      console.log('❌ Family not found in current list');
+      return;
+    }
+
+    setDetailsLoading(true);
+    setModalVisible(true); // Open modal immediately with loading
+    
+    try {
+      // Try to fetch full details from API
+      const details = await apiService.getFamilyDetails(familyId);
+      
+      if (details) {
+        // Use API details but ensure we have the latest photo from current list
+        const fullDetails: FullFamilyData = {
+          ...details,
+          plant_photo: currentFamily.plant_photo || details.plant_photo, // Use latest photo
+          age: details.age || 25 // Ensure non-zero age for full details view
+        };
+        console.log('✅ Full details loaded with photo:', fullDetails.plant_photo);
+        setSelectedFamilyDetails(fullDetails);
+      } else {
+        // Fallback: create full details from current family data
+        console.log('⚠️ API failed, using current family data with photo');
+        const fallbackDetails: FullFamilyData = {
+          id: currentFamily.id,
+          username: currentFamily.mobileNumber,
+          childName: currentFamily.childName,
+          parentName: currentFamily.parentName,
+          motherName: '',
+          fatherName: '',
+          mobileNumber: currentFamily.mobileNumber,
+          village: currentFamily.village,
+          age: 25, // Non-zero age for full details view
+          dateOfBirth: 'उपलब्ध नहीं',
+          weight: 0,
+          height: 0,
+          anganwadiCode: 0,
+          plant_photo: currentFamily.plant_photo, // Use current photo
+          totalImagesYet: currentFamily.plant_photo ? 1 : 0,
+          health_status: 'उपलब्ध नहीं'
+        };
+        setSelectedFamilyDetails(fallbackDetails);
+      }
+    } catch (error) {
+      console.error('Error in handleViewDetails:', error);
+      setModalVisible(false);
+    } finally {
+      setDetailsLoading(false);
     }
   };
 
@@ -381,15 +426,43 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
       onPhotoUpload: (result: any) => {
         console.log('✅ Photo upload completed:', result);
         
-        // Refresh the family data to show updated photo
-        if (searchQuery) {
-          console.log('🔄 Refreshing family data after photo upload...');
-          const abortController = new AbortController();
-          fetchFamilies(searchQuery, abortController.signal);
+        // Update the specific family's photo in the current list
+        if (result.success && result.photo_url) {
+          console.log('🔄 Updating family photo in current list with new photo:', result.photo_url);
+          
+          setFilteredFamilies(prevFamilies => 
+            prevFamilies.map(family => {
+              if (family.mobileNumber === username && family.childName === childName) {
+                console.log(`✅ Updated photo for ${childName} (${username}): ${result.photo_url}`);
+                return {
+                  ...family,
+                  plant_photo: result.photo_url
+                };
+              }
+              return family;
+            })
+          );
+          
+          // Also update selectedFamilyDetails if it's currently showing this family
+          setSelectedFamilyDetails(prevDetails => {
+            if (prevDetails && prevDetails.mobileNumber === username && prevDetails.childName === childName) {
+              console.log(`✅ Updated modal photo for ${childName}: ${result.photo_url}`);
+              return {
+                ...prevDetails,
+                plant_photo: result.photo_url
+              };
+            }
+            return prevDetails;
+          });
         }
+        
+        // Also refresh the family data to ensure consistency
+        console.log('🔄 Refreshing family data after photo upload...');
+        const abortController = new AbortController();
+        fetchFamilies(searchQuery, abortController.signal);
       }
     });
-  }, [navigation, selectedFamilyDetails, searchQuery]);
+  }, [navigation, selectedFamilyDetails, searchQuery, fetchFamilies]);
 
   const handleCallFamily = (mobileNumber: string) => {
     if (!mobileNumber) {
@@ -681,7 +754,7 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                   </View>
                 </View>
               ) : (
-                // Eye button access - show full details
+                // Eye button access - show full details WITH photo
                 <View>
                   <Text style={styles.detailText}>
                     <Text style={styles.detailLabel}>बच्चे का नाम:</Text> <Text>{selectedFamilyDetails.childName}</Text>
@@ -723,7 +796,7 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                     <Text style={styles.detailLabel}>कुल इमेज अपलोड:</Text> <Text>{selectedFamilyDetails.totalImagesYet}</Text>
                   </Text>
 
-                  {/* Plant Photo Section with Upload/View Options */}
+                  {/* Plant Photo Section with Upload/View Options - ALWAYS SHOW */}
                   <View style={styles.plantPhotoSection}>
                     <Text style={styles.sectionHeader}>पौधे की फोटो</Text>
                     {selectedFamilyDetails.plant_photo ? (
