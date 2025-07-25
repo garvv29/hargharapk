@@ -1,11 +1,18 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import time
+import os
 import mysql.connector
 from mysql.connector import Error
 
 app = Flask(__name__)
 CORS(app)
+
+# Serve static files (uploaded photos)
+@app.route('/static/<filename>')
+def uploaded_file(filename):
+    uploads_dir = os.path.join(os.path.dirname(__file__), 'uploads')
+    return send_from_directory(uploads_dir, filename)
 
 class Database:
     def __init__(self, database="project"):
@@ -231,6 +238,190 @@ def search_families():
 def health_check():
     """Health check endpoint for connectivity testing"""
     return jsonify({'status': 'healthy', 'timestamp': time.time()}), 200
+
+@app.route('/get_photo', methods=['POST'])
+def get_photo():
+    """Get plant photo for a student"""
+    db = Database(database="project")
+    
+    try:
+        # Get form data
+        mobile = request.form.get('mobile', '').strip()
+        name = request.form.get('name', '').strip()
+        
+        if not mobile or not name:
+            return jsonify({'success': False, 'message': 'Mobile and name required'}), 400
+        
+        # Query to get student photo data
+        query = """
+            SELECT name, mobile, plant_photo, pledge_photo, totalImagesYet
+            FROM students 
+            WHERE mobile = %s AND name = %s
+        """
+        
+        db.execute(query, (mobile, name))
+        result = db.fetchone()
+        
+        if result:
+            # Convert result to dictionary
+            student_data = {
+                'name': result[0],
+                'mobile': result[1],
+                'plant_photo': result[2],
+                'pledge_photo': result[3],
+                'totalImagesYet': result[4]
+            }
+            
+            print(f"[GET_PHOTO] Found student data: {student_data}")
+            return jsonify([student_data]), 200
+        else:
+            print(f"[GET_PHOTO] No student found for mobile: {mobile}, name: {name}")
+            return jsonify([]), 404
+            
+    except Exception as e:
+        print(f"[GET_PHOTO ERROR] {e}")
+        return jsonify({'success': False, 'message': f'Error fetching photo: {str(e)}'}), 500
+    finally:
+        db.close()
+
+@app.route('/upload_plant_photo', methods=['POST'])
+def upload_plant_photo():
+    """Upload plant photo and update database"""
+    db = Database(database="project")
+    
+    try:
+        # Get form data
+        username = request.form.get('username', '').strip()
+        name = request.form.get('name', '').strip()
+        plant_stage = request.form.get('plant_stage', '').strip()
+        description = request.form.get('description', '').strip()
+        
+        # Get uploaded file
+        if 'photo' not in request.files:
+            return jsonify({'success': False, 'message': 'No photo file uploaded'}), 400
+        
+        file = request.files['photo']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No photo file selected'}), 400
+        
+        # Create uploads directory if it doesn't exist
+        uploads_dir = os.path.join(os.path.dirname(__file__), 'uploads')
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)
+        
+        # Generate unique filename
+        timestamp = int(time.time())
+        file_extension = os.path.splitext(file.filename)[1] or '.jpg'
+        filename = f"plant_{username}_{name}_{timestamp}{file_extension}"
+        file_path = os.path.join(uploads_dir, filename)
+        
+        # Save file
+        file.save(file_path)
+        print(f"[UPLOAD] Photo saved: {file_path}")
+        
+        # Update database - find student by mobile (username) and name, then update plant_photo
+        update_query = """
+            UPDATE students 
+            SET plant_photo = %s, totalImagesYet = totalImagesYet + 1 
+            WHERE mobile = %s AND name = %s
+        """
+        
+        db.execute(update_query, (filename, username, name))
+        
+        if db.cursor.rowcount > 0:
+            print(f"[UPLOAD] Database updated for {name} (mobile: {username})")
+            
+            # Get updated count
+            count_query = "SELECT totalImagesYet FROM students WHERE mobile = %s AND name = %s"
+            db.execute(count_query, (username, name))
+            result = db.fetchone()
+            total_images = result[0] if result else 1
+            
+            return jsonify({
+                'success': True,
+                'message': f'फोटो सफलतापूर्वक अपलोड हो गई! यह आपकी {total_images} वीं तस्वीर है।',
+                'photo_url': f'/static/{filename}',
+                'total_images_uploaded': total_images,
+                'is_moringa': None,  # Can add ML prediction here later
+                'confidence': None
+            }), 200
+        else:
+            # Student not found, return error
+            return jsonify({
+                'success': False,
+                'message': 'छात्र नहीं मिला। कृपया सही मोबाइल नंबर और नाम दर्ज करें।'
+            }), 404
+            
+    except Exception as e:
+        print(f"[UPLOAD ERROR] {e}")
+        return jsonify({'success': False, 'message': f'अपलोड में त्रुटि: {str(e)}'}), 500
+    finally:
+        db.close()
+
+@app.route('/upload_pledge_photo', methods=['POST'])
+def upload_pledge_photo():
+    """Upload pledge photo and update database"""
+    db = Database(database="project")
+    
+    try:
+        # Get form data
+        username = request.form.get('username', '').strip()
+        name = request.form.get('name', '').strip()
+        description = request.form.get('description', '').strip()
+        
+        # Get uploaded file
+        if 'photo' not in request.files:
+            return jsonify({'success': False, 'message': 'No photo file uploaded'}), 400
+        
+        file = request.files['photo']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No photo file selected'}), 400
+        
+        # Create uploads directory if it doesn't exist
+        uploads_dir = os.path.join(os.path.dirname(__file__), 'uploads')
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)
+        
+        # Generate unique filename for pledge photo
+        timestamp = int(time.time())
+        file_extension = os.path.splitext(file.filename)[1] or '.jpg'
+        filename = f"pledge_{username}_{name}_{timestamp}{file_extension}"
+        file_path = os.path.join(uploads_dir, filename)
+        
+        # Save file
+        file.save(file_path)
+        print(f"[PLEDGE_UPLOAD] Photo saved: {file_path}")
+        
+        # Update database - find student by mobile (username) and name, then update pledge_photo
+        update_query = """
+            UPDATE students 
+            SET pledge_photo = %s 
+            WHERE mobile = %s AND name = %s
+        """
+        
+        db.execute(update_query, (filename, username, name))
+        
+        if db.cursor.rowcount > 0:
+            print(f"[PLEDGE_UPLOAD] Database updated for {name} (mobile: {username})")
+            
+            return jsonify({
+                'success': True,
+                'message': f'प्रतिज्ञा फोटो सफलतापूर्वक अपलोड हो गई!',
+                'photo_url': f'/static/{filename}',
+                'photo_type': 'pledge'
+            }), 200
+        else:
+            # Student not found, return error
+            return jsonify({
+                'success': False,
+                'message': 'छात्र नहीं मिला। कृपया सही मोबाइल नंबर और नाम दर्ज करें।'
+            }), 404
+            
+    except Exception as e:
+        print(f"[PLEDGE_UPLOAD ERROR] {e}")
+        return jsonify({'success': False, 'message': f'अपलोड में त्रुटि: {str(e)}'}), 500
+    finally:
+        db.close()
 
 @app.route('/login', methods=['POST'])
 def login():

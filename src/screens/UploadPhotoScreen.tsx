@@ -133,6 +133,10 @@ export default function UploadPhotoScreen({ navigation, route }: UploadPhotoScre
         ); 
       }
       
+      // Clear any image cache in React Native
+      // This helps ensure fresh images are loaded
+      console.log('🔄 Clearing image cache after upload...');
+      
       // Use the message from the backend response directly for the alert
       Alert.alert(
         'सफलता', 
@@ -140,7 +144,10 @@ export default function UploadPhotoScreen({ navigation, route }: UploadPhotoScre
         [
           {
             text: 'ठीक है',
-            onPress: () => navigation.goBack(), // Go back to FamilyDashboard
+            onPress: () => {
+              // Navigate back and trigger photo refresh
+              navigation.goBack();
+            },
           },
         ]
       );

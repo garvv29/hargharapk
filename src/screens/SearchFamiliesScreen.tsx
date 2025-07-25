@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, ScrollView, Alert, ActivityIndicator, Linking, Image } from 'react-native'; // <--- Ensure Image is imported
+import { StyleSheet, View, ScrollView, Alert, ActivityIndicator, Linking, Image, Platform, Share, PermissionsAndroid } from 'react-native'; // <--- Ensure Image is imported
 import { Card, Title, Button, Surface, Text, TextInput, Appbar, Chip, Avatar, IconButton, Modal, Portal } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Keyboard } from 'react-native';
 import { API_BASE_URL } from '../utils/api';
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
 
 // Extend FamilyData to include all details needed for the popup
 // These fields are expected from the /families/user/{userId} endpoint
@@ -31,7 +34,7 @@ interface SearchFamiliesScreenProps {
   navigation: any;
 }
 
-// Initial FamilyData interface (from search results) - updated to include photo
+// Initial FamilyData interface (from search results) - updated to include both photos
 interface FamilyData {
   id: string;
   childName: string;
@@ -40,34 +43,24 @@ interface FamilyData {
   village: string;
   plantDistributed: boolean;
   plant_photo?: string; // Add photo URL to display in list
+  pledge_photo?: string; // Add pledge photo URL
 }
 
 
 const apiService = {
   searchFamilies: async (query: string, signal?: AbortSignal): Promise<FamilyData[]> => {
-    // Use the correct endpoint from Flask backend - /search not /families/search
+    // Use backend's /search endpoint
     let url = `${API_BASE_URL}/search?query=${encodeURIComponent(query)}`;
 
     console.log("FETCHING URL:", url);
 
     try {
-      // Get stored token for authorization
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      const token = await AsyncStorage.getItem('auth_token');
-      
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      };
-      
-      // Add authorization header if token exists
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
       const response = await fetch(url, { 
         method: 'GET',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         signal 
       });
       
@@ -84,58 +77,69 @@ const apiService = {
         console.log('Fetch aborted');
       } else {
         console.error('ERROR FETCHING SEARCH RESULTS:', error);
-        // Network errors will show empty results instead of fallback data
         console.log('⚠️ API error, showing empty results:', error.message);
       }
       return [];
     }
   },
   
-  // New function to fetch photo using POST with mobile and name
-  getPhoto: async (mobile: string, name: string): Promise<string | null> => {
+  // Updated to use backend's /get_photo POST endpoint - returns both photos
+  getPhoto: async (mobile: string, name: string): Promise<{plant_photo: string | null, pledge_photo: string | null}> => {
     let url = `${API_BASE_URL}/get_photo`;
 
     console.log("FETCHING PHOTO URL:", url);
     console.log("POST data:", { mobile, name });
 
     try {
+      const formData = new FormData();
+      formData.append('mobile', mobile);
+      formData.append('name', name);
+
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          mobile: mobile,
-          name: name
-        })
+        body: formData
       });
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.message || errorData.error || `HTTP error! status: ${response.status}`;
-        throw new Error(errorMessage);
+        console.log(`Photo fetch failed with status: ${response.status}`);
+        return { plant_photo: null, pledge_photo: null };
       }
       
       const data = await response.json();
       console.log("RECEIVED PHOTO DATA:", data);
       
-      if (data.success && data.photo_url) {
-        return data.photo_url;
+      // Backend returns array with photo data
+      if (Array.isArray(data) && data.length > 0 && data[0]) {
+        const photoData = data[0];
+        
+        let plantPhotoUrl = null;
+        let pledgePhotoUrl = null;
+        
+        if (photoData.plant_photo) {
+          plantPhotoUrl = `${API_BASE_URL}/static/${photoData.plant_photo}`;
+          console.log('✅ Plant photo URL constructed:', plantPhotoUrl);
+        }
+        
+        if (photoData.pledge_photo) {
+          pledgePhotoUrl = `${API_BASE_URL}/static/${photoData.pledge_photo}`;
+          console.log('✅ Pledge photo URL constructed:', pledgePhotoUrl);
+        }
+        
+        return { plant_photo: plantPhotoUrl, pledge_photo: pledgePhotoUrl };
       } else {
-        console.log('No photo found for this student');
-        return null;
+        console.log('No photos found for this student');
+        return { plant_photo: null, pledge_photo: null };
       }
     } catch (error: any) {
       console.error('ERROR FETCHING PHOTO:', error);
       console.log('⚠️ Photo fetch failed:', error.message);
-      return null;
+      return { plant_photo: null, pledge_photo: null };
     }
   },
 
-  // New API call to fetch full details for a single family
+  // Updated family details to match backend endpoint
   getFamilyDetails: async (userId: string): Promise<FullFamilyData | null> => {
-    let url = `${API_BASE_URL}/families/user1/${userId}`; // Matches your backend endpoint
+    let url = `${API_BASE_URL}/families/user1/${userId}`;
 
     console.log("FETCHING FULL FAMILY DETAILS URL:", url);
 
@@ -151,7 +155,6 @@ const apiService = {
       return data as FullFamilyData;
     } catch (error: any) {
       console.error('ERROR FETCHING FULL FAMILY DETAILS:', error);
-      // Don't show alert for network errors, just log and return null
       console.log('⚠️ Family details load failed, will show basic info only:', error.message);
       return null;
     }
@@ -165,6 +168,163 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedFamilyDetails, setSelectedFamilyDetails] = useState<FullFamilyData | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false); // New loading state for modal
+  const [photoCache, setPhotoCache] = useState<{[key: string]: {plant_photo: string | null, pledge_photo: string | null}}>({}); // Cache for photos with timestamp
+  const [photoRefreshTrigger, setPhotoRefreshTrigger] = useState(0); // Force photo refresh
+  
+  // Photo gallery states
+  const [photoModalVisible, setPhotoModalVisible] = useState(false);
+  const [currentPhotoType, setCurrentPhotoType] = useState<'plant' | 'pledge'>('plant');
+  const [currentPhotoUrl, setCurrentPhotoUrl] = useState<string | null>(null);
+  const [downloadingPhoto, setDownloadingPhoto] = useState(false);
+
+  // Function to clear photo cache and force refresh
+  const refreshPhotos = useCallback(() => {
+    setPhotoCache({});
+    setPhotoRefreshTrigger(prev => prev + 1);
+    console.log('🔄 Photo cache cleared and refresh triggered');
+  }, []);
+
+  // Photo view functions
+  const viewPhoto = (photoUrl: string, photoType: 'plant' | 'pledge') => {
+    setCurrentPhotoUrl(photoUrl);
+    setCurrentPhotoType(photoType);
+    setPhotoModalVisible(true);
+  };
+
+  const downloadPhoto = async (photoUrl: string, photoType: 'plant' | 'pledge') => {
+    try {
+      setDownloadingPhoto(true);
+      console.log('📥 Starting download for:', photoUrl);
+      
+      // Request media library permissions
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Gallery access permission is needed to save photos');
+        return;
+      }
+      
+      // Create filename with timestamp and proper naming
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '_');
+      const fileName = `HarGharMunga_${photoType}_${timestamp}.jpg`;
+      
+      // Download to app's cache directory first
+      const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+      const downloadResult = await FileSystem.downloadAsync(photoUrl, fileUri);
+      
+      if (downloadResult.status === 200) {
+        console.log('✅ Photo downloaded to cache:', fileUri);
+        
+        // Save to device's photo gallery
+        const asset = await MediaLibrary.createAssetAsync(fileUri);
+        
+        // Create a custom album or use default
+        let album = await MediaLibrary.getAlbumAsync('HarGharMunga');
+        if (album == null) {
+          album = await MediaLibrary.createAlbumAsync('HarGharMunga', asset, false);
+        } else {
+          await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+        }
+        
+        // Clean up cache file
+        await FileSystem.deleteAsync(fileUri, { idempotent: true });
+        
+        Alert.alert(
+          '✅ डाउनलोड सफल',
+          `${photoType === 'plant' ? 'पौधे की' : 'प्रतिज्ञा की'} फोटो आपकी Gallery में save हो गई!\n\n📁 Album: HarGharMunga\n📱 Gallery app में देख सकते हैं।`,
+          [{ text: 'OK', style: 'default' }]
+        );
+        console.log('✅ Photo saved to gallery successfully');
+      } else {
+        throw new Error(`Download failed with status: ${downloadResult.status}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Download error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      Alert.alert(
+        '❌ डाउनलोड Error', 
+        `फोटो डाउनलोड करने में समस्या हुई:\n\n${errorMessage}\n\nकृपया फिर से try करें।`,
+        [{ text: 'OK', style: 'default' }]
+      );
+    } finally {
+      setDownloadingPhoto(false);
+    }
+  };
+
+  const sharePhoto = async (photoUrl: string, photoType: 'plant' | 'pledge') => {
+    try {
+      console.log('📤 Starting share for:', photoUrl);
+      
+      // Download the photo to a temporary location first
+      const tempFileName = `share_${photoType}_${Date.now()}.jpg`;
+      const tempFileUri = `${FileSystem.cacheDirectory}${tempFileName}`;
+      
+      console.log('📥 Downloading photo to temp location for sharing...');
+      const downloadResult = await FileSystem.downloadAsync(photoUrl, tempFileUri);
+      
+      if (downloadResult.status === 200) {
+        console.log('✅ Photo downloaded to temp location:', tempFileUri);
+        
+        // Try expo-sharing first (better file sharing)
+        if (await Sharing.isAvailableAsync()) {
+          console.log('🚀 Using expo-sharing for file sharing...');
+          await Sharing.shareAsync(tempFileUri, {
+            mimeType: 'image/jpeg',
+            dialogTitle: `${photoType === 'plant' ? 'पौधे की' : 'प्रतिज्ञा की'} फोटो - हर घर मुंगा`,
+          });
+          console.log('✅ Photo shared successfully via expo-sharing');
+        } else {
+          // Fallback to React Native Share with file URI
+          console.log('🔄 Expo-sharing not available, using React Native Share...');
+          
+          // For React Native Share, we need to use file:// protocol
+          const fileUri = Platform.OS === 'android' ? `file://${tempFileUri}` : tempFileUri;
+          
+          await Share.share({
+            url: fileUri,
+            title: `${photoType === 'plant' ? 'पौधे की' : 'प्रतिज्ञा की'} फोटो - हर घर मुंगा`,
+            message: `${photoType === 'plant' ? 'पौधे की' : 'प्रतिज्ञा की'} फोटो - हर घर मुंगा ऐप से साझा की गई`,
+          }, {
+            dialogTitle: `${photoType === 'plant' ? 'पौधे की' : 'प्रतिज्ञा की'} फोटो शेयर करें`,
+            subject: `${photoType === 'plant' ? 'पौधे की' : 'प्रतिज्ञा की'} फोटो - हर घर मुंगा`,
+          });
+          console.log('✅ Photo shared successfully via React Native Share');
+        }
+        
+        // Clean up temp file after a delay
+        setTimeout(async () => {
+          try {
+            await FileSystem.deleteAsync(tempFileUri, { idempotent: true });
+            console.log('🗑️ Temp file cleaned up');
+          } catch (cleanupError) {
+            console.log('⚠️ Could not clean up temp file:', cleanupError);
+          }
+        }, 5000); // 5 second delay to ensure sharing is complete
+        
+      } else {
+        throw new Error(`Failed to download photo for sharing. Status: ${downloadResult.status}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Share error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      Alert.alert(
+        '❌ Share Error',
+        `फोटो शेयर करने में समस्या हुई:\n\n${errorMessage}\n\nकृपया फिर से try करें।`,
+        [{ text: 'OK', style: 'default' }]
+      );
+    }
+  };
+
+  // Listen for photo upload completion from other screens
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      // When returning from upload screen, refresh photos
+      refreshPhotos();
+    });
+
+    return unsubscribe;
+  }, [navigation, refreshPhotos]);
 
   // Load initial data on mount
   useEffect(() => {
@@ -210,17 +370,39 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
               return family; // Return family without photo if data is incomplete
             }
 
-            console.log(`🔍 [${index + 1}/${data.length}] Fetching photo for: ${family.childName} (${family.mobileNumber})`);
-            const photoUrl = await apiService.getPhoto(family.mobileNumber, family.childName);
+            // Create cache key with refresh trigger to force reload
+            const cacheKey = `${family.mobileNumber}_${family.childName}_${photoRefreshTrigger}`;
             
-            if (photoUrl) {
-              console.log(`✅ [${index + 1}/${data.length}] Photo found for ${family.childName}: ${photoUrl}`);
+            // Check cache first
+            if (photoCache[cacheKey]) {
+              console.log(`🎯 [${index + 1}/${data.length}] Using cached photos for: ${family.childName}`);
+              const cachedPhotos = photoCache[cacheKey];
               return {
                 ...family,
-                plant_photo: photoUrl || undefined // Convert null to undefined for TypeScript compatibility
+                plant_photo: cachedPhotos.plant_photo || undefined,
+                pledge_photo: cachedPhotos.pledge_photo || undefined
+              };
+            }
+
+            console.log(`🔍 [${index + 1}/${data.length}] Fetching fresh photos for: ${family.childName} (${family.mobileNumber})`);
+            const photoData = await apiService.getPhoto(family.mobileNumber, family.childName);
+            
+            if (photoData.plant_photo || photoData.pledge_photo) {
+              console.log(`✅ [${index + 1}/${data.length}] Photos found for ${family.childName}:`, photoData);
+              
+              // Cache both photos
+              setPhotoCache(prev => ({
+                ...prev,
+                [cacheKey]: photoData
+              }));
+              
+              return {
+                ...family,
+                plant_photo: photoData.plant_photo || undefined,
+                pledge_photo: photoData.pledge_photo || undefined
               };
             } else {
-              console.log(`❌ [${index + 1}/${data.length}] No photo found for ${family.childName}`);
+              console.log(`❌ [${index + 1}/${data.length}] No photos found for ${family.childName}`);
               return family;
             }
           } catch (error) {
@@ -350,67 +532,6 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
     }
   };
 
-  // New function to handle photo fetch for camera button
-  const handleFetchPhoto = async (family: FamilyData) => {
-    console.log('📷 Fetching photo for:', family.childName, family.mobileNumber);
-    setDetailsLoading(true);
-    setModalVisible(true); // Open modal immediately
-    
-    try {
-      // Fetch photo using POST API with mobile and name
-      const photoUrl = await apiService.getPhoto(family.mobileNumber, family.childName);
-      
-      if (photoUrl) {
-        // Create a minimal family details object with photo
-        const familyWithPhoto: FullFamilyData = {
-          id: family.id,
-          username: family.mobileNumber,
-          childName: family.childName,
-          parentName: family.parentName,
-          motherName: '',
-          fatherName: '',
-          mobileNumber: family.mobileNumber,
-          village: family.village,
-          age: 0,
-          dateOfBirth: '',
-          weight: 0,
-          height: 0,
-          anganwadiCode: 0,
-          plant_photo: photoUrl,
-          totalImagesYet: 1,
-          health_status: ''
-        };
-        setSelectedFamilyDetails(familyWithPhoto);
-      } else {
-        // Create family details without photo
-        const familyWithoutPhoto: FullFamilyData = {
-          id: family.id,
-          username: family.mobileNumber,
-          childName: family.childName,
-          parentName: family.parentName,
-          motherName: '',
-          fatherName: '',
-          mobileNumber: family.mobileNumber,
-          village: family.village,
-          age: 0,
-          dateOfBirth: '',
-          weight: 0,
-          height: 0,
-          anganwadiCode: 0,
-          plant_photo: undefined,
-          totalImagesYet: 0,
-          health_status: ''
-        };
-        setSelectedFamilyDetails(familyWithoutPhoto);
-      }
-    } catch (error) {
-      console.error('Error fetching photo:', error);
-      setModalVisible(false);
-    } finally {
-      setDetailsLoading(false);
-    }
-  };
-
   // Add this function to handle photo upload success callback
   const handlePhotoUpload = useCallback((username: string, childName: string) => {
     console.log('📸 Opening photo upload for:', { username, childName });
@@ -529,16 +650,28 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
             activeOutlineColor="#4CAF50"
             theme={{ colors: { primary: '#4CAF50' } }}
           />
-          <Button
-            mode="contained"
-            onPress={triggerSearch}
-            style={styles.searchButton}
-            buttonColor="#4CAF50"
-            disabled={loading}
-            icon="magnify"
-          >
-            <Text style={{ color: '#FFFFFF' }}>खोजें</Text>
-          </Button>
+          <View style={styles.buttonRow}>
+            <Button
+              mode="contained"
+              onPress={triggerSearch}
+              style={[styles.searchButton, { flex: 1, marginRight: 8 }]}
+              buttonColor="#4CAF50"
+              disabled={loading}
+              icon="magnify"
+            >
+              <Text style={{ color: '#FFFFFF' }}>खोजें</Text>
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={refreshPhotos}
+              style={[styles.refreshButton, { flex: 0.3 }]}
+              textColor="#4CAF50"
+              disabled={loading}
+              icon="refresh"
+            >
+              <Text style={{ color: '#4CAF50' }}>रिफ्रेश</Text>
+            </Button>
+          </View>
         </Surface>
 
         <Surface style={styles.summaryContainer}>
@@ -566,11 +699,16 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                       {family.plant_photo ? (
                         <View style={styles.photoSection}>
                           <Image
-                            source={{ uri: family.plant_photo }}
+                            source={{ 
+                              uri: family.plant_photo,
+                              cache: 'reload' // Force fresh load
+                            }}
                             style={styles.familyPhoto}
                             onError={(e) => console.log('Family photo loading error:', e.nativeEvent.error)}
                           />
-                          <Text style={styles.photoLabel}>पौधे की फोटो</Text>
+                          <Text style={styles.photoLabel}>
+                            {family.plant_photo.includes('plant_') ? 'पौधे की फोटो' : 'प्रतिज्ञा फोटो'}
+                          </Text>
                         </View>
                       ) : (
                         <View style={styles.noPhotoSection}>
@@ -612,37 +750,11 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                         size={20}
                         onPress={() => {
                           if (!family.mobileNumber || family.mobileNumber === 'null') {
-                            Alert.alert('जानकारी', 'इस छात्र का मोबाइल नंबर उपलब्ध नहीं है। फोटो fetch करने के लिए मोबाइल नंबर आवश्यक है।');
+                            Alert.alert('जानकारी', 'इस छात्र का मोबाइल नंबर उपलब्ध नहीं है। फोटो upload करने के लिए मोबाइल नंबर आवश्यक है।');
                             return;
                           }
-
-                          // If photo already exists, show it directly, otherwise fetch
-                          if (family.plant_photo) {
-                            // Create photo-focused family details for immediate display
-                            const familyWithPhoto: FullFamilyData = {
-                              id: family.id,
-                              username: family.mobileNumber,
-                              childName: family.childName,
-                              parentName: family.parentName,
-                              motherName: '',
-                              fatherName: '',
-                              mobileNumber: family.mobileNumber,
-                              village: family.village,
-                              age: 0, // Indicates camera access
-                              dateOfBirth: '',
-                              weight: 0,
-                              height: 0,
-                              anganwadiCode: 0,
-                              plant_photo: family.plant_photo,
-                              totalImagesYet: 1,
-                              health_status: ''
-                            };
-                            setSelectedFamilyDetails(familyWithPhoto);
-                            setModalVisible(true);
-                          } else {
-                            // Fetch photo if not already loaded
-                            handleFetchPhoto(family);
-                          }
+                          // Direct navigation to upload screen
+                          handlePhotoUpload(family.mobileNumber, family.childName);
                         }}
                         style={[styles.actionIcon, (!family.mobileNumber || family.mobileNumber === 'null') && { opacity: 0.5 }]}
                         iconColor={(!family.mobileNumber || family.mobileNumber === 'null') ? "#999" : "#FF9800"}
@@ -721,7 +833,10 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                     {selectedFamilyDetails.plant_photo ? (
                       <View style={styles.photoContainer}>
                         <Card.Cover
-                          source={{ uri: selectedFamilyDetails.plant_photo }}
+                          source={{ 
+                            uri: selectedFamilyDetails.plant_photo,
+                            cache: 'reload' // Force fresh load
+                          }}
                           style={styles.modalImage}
                           onError={(e) => console.log("Card.Cover image loading error:", e.nativeEvent.error)}
                         />
@@ -796,13 +911,53 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                     <Text style={styles.detailLabel}>कुल इमेज अपलोड:</Text> <Text>{selectedFamilyDetails.totalImagesYet}</Text>
                   </Text>
 
+                  {/* Photo View Buttons */}
+                  <View style={styles.photoViewSection}>
+                    <Text style={styles.sectionHeader}>फोटो देखें</Text>
+                    <View style={styles.photoButtonsRow}>
+                      <Button
+                        mode="outlined"
+                        icon="nature"
+                        style={styles.photoViewButton}
+                        textColor="#4CAF50"
+                        onPress={() => {
+                          if (selectedFamilyDetails.plant_photo) {
+                            viewPhoto(selectedFamilyDetails.plant_photo, 'plant');
+                          } else {
+                            Alert.alert('जानकारी', 'पौधे की फोटो उपलब्ध नहीं है');
+                          }
+                        }}
+                      >
+                        पौधे की फोटो देखें
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        icon="hand-heart"
+                        style={styles.photoViewButton}
+                        textColor="#FF5722"
+                        onPress={() => {
+                          if (selectedFamilyDetails.pledge_photo) {
+                            viewPhoto(selectedFamilyDetails.pledge_photo, 'pledge');
+                          } else {
+                            Alert.alert('जानकारी', 'प्रतिज्ञा की फोटो उपलब्ध नहीं है');
+                          }
+                        }}
+                      >
+                        प्रतिज्ञा की फोटो देखें
+                      </Button>
+                    </View>
+                  </View>
+
                   {/* Plant Photo Section with Upload/View Options - ALWAYS SHOW */}
                   <View style={styles.plantPhotoSection}>
                     <Text style={styles.sectionHeader}>पौधे की फोटो</Text>
                     {selectedFamilyDetails.plant_photo ? (
                       <View style={styles.photoContainer}>
                         <Card.Cover
-                          source={{ uri: selectedFamilyDetails.plant_photo }}
+                          source={{ 
+                            uri: selectedFamilyDetails.plant_photo,
+                            cache: 'reload' // Force fresh load
+                          }}
                           style={styles.modalImage}
                           onError={(e) => console.log("Card.Cover image loading error:", e.nativeEvent.error)}
                         />
@@ -846,6 +1001,58 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
               <Button mode="contained" onPress={() => setModalVisible(false)} style={styles.closeButton}>
                 <Text style={{ color: '#FFFFFF' }}>बंद करें</Text>
               </Button>
+            </View>
+          )}
+        </Modal>
+      </Portal>
+
+      {/* Photo View Modal */}
+      <Portal>
+        <Modal
+          visible={photoModalVisible}
+          onDismiss={() => setPhotoModalVisible(false)}
+          contentContainerStyle={styles.photoModalContent}
+        >
+          <View style={styles.photoModalHeader}>
+            <Text style={styles.photoModalTitle}>
+              {currentPhotoType === 'plant' ? 'पौधे की फोटो' : 'प्रतिज्ञा की फोटो'}
+            </Text>
+            <IconButton
+              icon="close"
+              onPress={() => setPhotoModalVisible(false)}
+              iconColor="#333"
+            />
+          </View>
+          
+          {currentPhotoUrl && (
+            <View style={styles.photoModalBody}>
+              <Image
+                source={{ uri: currentPhotoUrl, cache: 'reload' }}
+                style={styles.fullPhotoImage}
+                resizeMode="contain"
+              />
+              
+              <View style={styles.photoModalActions}>
+                <Button
+                  mode="outlined"
+                  icon="download"
+                  style={styles.photoModalButton}
+                  textColor="#4CAF50"
+                  loading={downloadingPhoto}
+                  onPress={() => downloadPhoto(currentPhotoUrl, currentPhotoType)}
+                >
+                  डाउनलोड करें
+                </Button>
+                <Button
+                  mode="outlined"
+                  icon="share"
+                  style={styles.photoModalButton}
+                  textColor="#2196F3"
+                  onPress={() => sharePhoto(currentPhotoUrl, currentPhotoType)}
+                >
+                  शेयर करें
+                </Button>
+              </View>
             </View>
           )}
         </Modal>
@@ -895,9 +1102,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 10,
   },
-  searchButton: {
+  buttonRow: {
+    flexDirection: 'row',
     marginTop: 10,
+    alignItems: 'center',
+  },
+  searchButton: {
     borderRadius: 12,
+  },
+  refreshButton: {
+    borderRadius: 12,
+    borderColor: '#4CAF50',
   },
   summaryContainer: {
     padding: 12,
@@ -1163,5 +1378,63 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 2,
     textAlign: 'center',
+  },
+  // Photo View Section Styles
+  photoViewSection: {
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    paddingTop: 20,
+  },
+  photoButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  photoViewButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  // Photo Modal Styles
+  photoModalContent: {
+    backgroundColor: 'white',
+    margin: 20,
+    borderRadius: 12,
+    maxHeight: '90%',
+  },
+  photoModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  photoModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  photoModalBody: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  fullPhotoImage: {
+    width: '100%',
+    height: 400,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  photoModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    paddingHorizontal: 20,
+  },
+  photoModalButton: {
+    flex: 1,
+    marginHorizontal: 8,
+    borderWidth: 1,
   },
 });

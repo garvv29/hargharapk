@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'; 
 
-//export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; // 
-export const API_BASE_URL = 'http://165.22.208.62:5000';
+export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; 
+//export const API_BASE_URL = 'http://165.22.208.62:5000';
 export interface LoginResponse {
   success: boolean;
   message: string;
@@ -292,9 +292,9 @@ class ApiService {
   ): Promise<{ 
     success: boolean; 
     message: string; 
-    fileUrl?: string;
-    totalImagesUploaded?: number;
-    isValidMoringa?: boolean;
+    photo_url?: string;
+    total_images_uploaded?: number;
+    is_moringa?: boolean;
     confidence?: number;
   }> {
     console.log('📤 Starting photo upload...');
@@ -322,9 +322,7 @@ class ApiService {
       const res = await fetch(`${this.baseURL}/upload_plant_photo`, {
         method: 'POST',
         headers: {
-          // Remove Content-Type for FormData - let browser set it automatically
-          // Don't include Authorization header if it's causing issues
-          // Authorization: `Bearer ${this.token}`,
+          // Don't set Content-Type for FormData - let browser set it automatically
         },
         body: formData,
       });
@@ -340,18 +338,65 @@ class ApiService {
       const result = await res.json();
       console.log('✅ Upload successful:', result);
       
-      // Enhanced response handling
+      // Match backend response format exactly
       return {
         success: result.success || true,
         message: result.message || 'Photo uploaded successfully',
-        fileUrl: result.photo_url || result.fileUrl,
-        totalImagesUploaded: result.total_images_uploaded,
-        isValidMoringa: result.is_moringa,
+        photo_url: result.photo_url,
+        total_images_uploaded: result.total_images_uploaded,
+        is_moringa: result.is_moringa,
         confidence: result.confidence
       };
     } catch (error: any) {
       console.error('❌ Photo upload error:', error);
       throw new Error(`Photo upload failed: ${error.message}`);
+    }
+  }
+
+  // New method to get photo from backend
+  async getPhoto(mobile: string, name: string): Promise<{ success: boolean; photo_url?: string; data?: any }> {
+    console.log('📸 Fetching photo for:', { mobile, name });
+    
+    const formData = new FormData();
+    formData.append('mobile', mobile);
+    formData.append('name', name);
+
+    try {
+      const response = await fetch(`${this.baseURL}/get_photo`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      console.log('📡 Get photo response status:', response.status);
+
+      if (!response.ok) {
+        console.log('❌ Photo not found or error');
+        return { success: false };
+      }
+
+      const result = await response.json();
+      console.log('✅ Photo fetch result:', result);
+      
+      // Backend returns array with photo data
+      if (Array.isArray(result) && result.length > 0 && result[0].plant_photo) {
+        const photoData = result[0];
+        // Construct full URL for photo with cache-busting timestamp
+        const timestamp = Date.now();
+        const photoUrl = `${this.baseURL}/static/${photoData.plant_photo}?t=${timestamp}`;
+        console.log('📷 Photo URL constructed with cache buster:', photoUrl);
+        
+        return {
+          success: true,
+          photo_url: photoUrl,
+          data: photoData
+        };
+      } else {
+        console.log('📷 No photo found in response');
+        return { success: false };
+      }
+    } catch (error: any) {
+      console.error('❌ Error fetching photo:', error);
+      return { success: false };
     }
   }
 
