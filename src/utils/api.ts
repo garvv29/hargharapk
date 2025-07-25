@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'; 
 
-export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; 
-//export const API_BASE_URL = 'http://165.22.208.62:5000';
+//export const API_BASE_URL = 'https://grx6djfl-5001.inc1.devtunnels.ms'; 
+export const API_BASE_URL = 'http://165.22.208.62:5000/';
 export interface LoginResponse {
   success: boolean;
   message: string;
@@ -233,10 +233,11 @@ class ApiService {
   }
 
   async login(username: string, password: string): Promise<LoginResponse> {
+    // Only one attempt for login, no retries
     const response = await this.makeRequest<LoginResponse>('/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
-    });
+    }, 1);
     if (response.success && response.token) {
       this.setToken(response.token);
     }

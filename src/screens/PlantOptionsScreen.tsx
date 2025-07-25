@@ -27,6 +27,24 @@ const customTheme = {
     onSurfaceVariant: '#666666',
     onPrimary: '#FFFFFF',
     onSecondary: '#FFFFFF',
+    // Force override system colors that cause purple text
+    onBackground: '#1a1a1a',
+    background: '#FFFFFF',
+    inverseSurface: '#1a1a1a',
+    inverseOnSurface: '#FFFFFF',
+    // Override Material 3 dynamic colors
+    tertiary: '#4CAF50',
+    onTertiary: '#FFFFFF',
+    tertiaryContainer: '#E8F5E8',
+    onTertiaryContainer: '#1a1a1a',
+    // Additional APK color overrides for comprehensive theme isolation
+    surfaceTint: '#4CAF50',
+    error: '#B00020',
+    onError: '#FFFFFF',
+    errorContainer: '#FDEAEA',
+    onErrorContainer: '#410E0B',
+    scrim: '#000000',
+    shadow: '#000000',
   },
 };
 
@@ -242,12 +260,10 @@ export default function PlantOptionsScreen({ navigation }: PlantOptionsScreenPro
         </Appbar.Header>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          <Surface style={styles.titleContainer} elevation={4}>
-            <Title style={styles.pageTitle}>हमारे पौधे</Title>
-            <Text style={styles.subtitle}>नीचे दिए गए पौधों में से चुनें और फोटो अपलोड करें</Text>
-          </Surface>
-
-          <View style={styles.plantsGrid}>
+        <Surface style={styles.titleContainer} elevation={4}>
+          <Title style={styles.pageTitle}>हमारे पौधे</Title>
+          <Text style={styles.subtitle}>नीचे दिए गए पौधों में से चुनें और फोटो अपलोड करें</Text>
+        </Surface>          <View style={styles.plantsGrid}>
             {plantOptions.map((plant, index) => renderPlantCard(plant, index))}
           </View>
         </ScrollView>
@@ -350,12 +366,16 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     textAlign: 'center',
     marginBottom: 8,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   subtitle: {
     fontSize: 14,
     color: '#666666',
     textAlign: 'center',
     lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   plantsGrid: {
     flexDirection: 'row',
@@ -387,6 +407,8 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     textAlign: 'center',
     lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   plantDescription: {
     fontSize: 12,
@@ -394,6 +416,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 16,
     lineHeight: 16,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   uploadedImageContainer: {
     width: '100%',
@@ -436,6 +460,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   // Photo preview and modal styles
   previewImage: {
@@ -525,5 +551,7 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontSize: 14,
     fontWeight: '600',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
 });

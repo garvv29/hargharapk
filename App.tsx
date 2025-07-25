@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView, KeyboardAvoidingView, Platform, Alert, Image } from 'react-native';
-import { Provider as PaperProvider, Card, Button, Surface, TextInput, Text } from 'react-native-paper';
+import { Provider as PaperProvider, Card, Button, Surface, TextInput, Text, MD3LightTheme } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { apiService } from './src/utils/api';
 
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import AdminDashboard from './src/screens/AdminDashboard';
 import AnganwadiDashboard from './src/screens/AnganwadiDashboard';
 import FamilyDashboard from './src/screens/FamilyDashboard';
 import UploadPhotoScreen from './src/screens/UploadPhotoScreen';
@@ -19,24 +18,50 @@ import FamilyProgressScreen from './src/screens/FamilyProgressScreen';
 import LoadingScreen from './src/screens/LoadingScreen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+// Custom theme to fix APK text color issues
+const customTheme = {
+  ...MD3LightTheme,
+  colors: {
+    ...MD3LightTheme.colors,
+    primary: '#2E7D32',
+    secondary: '#4CAF50',
+    surface: '#FFFFFF',
+    background: '#FFFFFF',
+    onSurface: '#1a1a1a',
+    onBackground: '#1a1a1a',
+    onPrimary: '#FFFFFF',
+    onSecondary: '#FFFFFF',
+    // Force text input colors
+    outline: '#2E7D32',
+    outlineVariant: '#2E7D32',
+    onSurfaceVariant: '#1a1a1a',
+    surfaceVariant: '#FFFFFF',
+    // Explicit overrides to prevent purple text
+    tertiary: '#2E7D32',
+    onTertiary: '#FFFFFF',
+    tertiaryContainer: '#E8F5E8',
+    onTertiaryContainer: '#1a1a1a',
+    primaryContainer: '#E8F5E8',
+    onPrimaryContainer: '#1a1a1a',
+    secondaryContainer: '#E8F5E8',
+    onSecondaryContainer: '#1a1a1a',
+    inverseSurface: '#1a1a1a',
+    inverseOnSurface: '#FFFFFF',
+    surfaceTint: '#2E7D32',
+    error: '#B00020',
+    onError: '#FFFFFF',
+    errorContainer: '#FDEAEA',
+    onErrorContainer: '#410E0B',
+  },
+};
+
 const Stack = createStackNavigator();
 
-// Demo users for offline mode
+// Demo users for offline mode (admin user removed)
 const getDemoUsers = () => [
   {
-    username: 'admin',
-    contact_number: 'admin',
-    password: 'admin',
-    name: 'admin',
-    role: 'aanganwadi',
-    aanganwaadi_id: '101',
-    address: 'raipur',
-    gram: 'raipur',
-    supervisor_name: 'सुपरवाइजर'
-  },
-  {
     username: 'student001',
-    contact_number: '9876543210', 
+    contact_number: 'student001', 
     password: 'student001',
     name: 'राहुल शर्मा',
     role: 'family',
@@ -48,7 +73,7 @@ const getDemoUsers = () => [
   },
   {
     username: 'student002',
-    contact_number: '9876543211',
+    contact_number: 'student002',
     password: 'student002', 
     name: 'प्रिया वर्मा',
     role: 'family',
@@ -75,20 +100,10 @@ function LoginScreen({ navigation }: { navigation: any }) {
     setLoading(true);
     
     try {
-      // Test server connection (optional) - but don't block login if it fails
-      console.log('Testing connection to server...');
-      try {
-        const connectionTest = await apiService.testConnection();
-        console.log('Connection test result:', connectionTest);
-        
-        if (!connectionTest.success) {
-          console.log('Connection test failed, but continuing with login...');
-        }
-      } catch (connectionError) {
-        console.log('Connection test error, but continuing with login...', connectionError);
-      }
+      console.log('🚀 Starting fast login process...');
       
-      console.log('Connection successful, attempting login...');
+      // Skip connection test for faster login
+      console.log('⚡ Skipping connection test for speed optimization');
       
       // First try to fetch user from external table using contact number
       console.log('🔍 Fetching user from external table...');
@@ -96,7 +111,13 @@ function LoginScreen({ navigation }: { navigation: any }) {
       
       let externalUserResponse;
       try {
-        externalUserResponse = await apiService.fetchUserFromExternalTable(email.trim());
+        // Add timeout for faster failure
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 3000) // 3 second timeout
+        );
+        
+        const fetchPromise = apiService.fetchUserFromExternalTable(email.trim());
+        externalUserResponse = await Promise.race([fetchPromise, timeoutPromise]);
         console.log('📊 External user response:', externalUserResponse);
       } catch (externalError) {
         console.log('🔴 External table fetch failed:', externalError);
@@ -112,13 +133,7 @@ function LoginScreen({ navigation }: { navigation: any }) {
         const userRole = user.role || 'family';
         console.log('User role:', userRole);
         
-        // Fix role mapping for aanganwadi_worker
-        let normalizedRole = userRole;
-        if (userRole === 'aanganwadi_worker') {
-          normalizedRole = 'aanganwadi';
-        }
-        
-        switch (normalizedRole) {
+        switch (userRole) {
           case 'admin':
             console.log('🚀 Navigating to AnganwadiDashboard with admin user data:', user);
             navigation.navigate('AnganwadiDashboard', {
@@ -175,43 +190,31 @@ function LoginScreen({ navigation }: { navigation: any }) {
             break;
         }
       } else {
-        // If not found in external table, try regular login with retry logic
+        // If not found in external table, try regular login with optimized retry logic
         console.log('User not found in external table, trying regular login...');
         
-        let loginAttempts = 0;
-        const maxAttempts = 2; // Reduced from 3 to 2 for faster fallback
-        let response;
-        
-        while (loginAttempts < maxAttempts) {
-          try {
-            loginAttempts++;
-            console.log(`🌐 Login attempt ${loginAttempts}/${maxAttempts}`);
-            response = await apiService.login(email.trim(), password);
-            console.log('Regular login response:', response);
-            break; // Success, exit loop
-          } catch (loginError: any) {
-            console.log(`❌ Login attempt ${loginAttempts} failed:`, loginError);
-            if (loginAttempts < maxAttempts) {
-              console.log(`⏳ Retrying login in ${loginAttempts * 500}ms...`); // Reduced retry delay
-              await new Promise(resolve => setTimeout(resolve, loginAttempts * 500)); // 500ms, 1000ms
-            }
-          }
+        let response: any;
+        try {
+          // Add timeout for faster failure
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Login timeout')), 5000) // 5 second timeout
+          );
+          const loginPromise = apiService.login(email.trim(), password);
+          response = await Promise.race([loginPromise, timeoutPromise]);
+          console.log('Regular login response:', response);
+        } catch (loginError: any) {
+          console.log('❌ Login attempt failed:', loginError);
         }
         
-        // Check if we have demo users for offline mode
+        // Check demo users immediately if login fails
+        let usedDemoUser = false;
         if (!response || !response.success) {
-          console.log('🔄 All login attempts failed, checking for demo users...');
-          console.log('📝 Entered email/username:', email.trim());
-          console.log('📝 Entered password:', password);
-          
+          console.log('🔄 Login failed, checking demo users immediately...');
           const demoUsers = getDemoUsers();
-          console.log('👥 Available demo users:', demoUsers.map(u => ({username: u.username, contact_number: u.contact_number, role: u.role})));
-          
           const demoUser = demoUsers.find(user => 
             (user.username === email.trim() || user.contact_number === email.trim()) && 
             user.password === password
           );
-          
           if (demoUser) {
             console.log('✅ Demo user found, proceeding with offline login:', demoUser);
             response = {
@@ -220,12 +223,7 @@ function LoginScreen({ navigation }: { navigation: any }) {
               role: demoUser.role,
               message: 'Demo login successful'
             };
-          } else {
-            console.log('❌ No matching demo user found');
-            console.log('🔍 Checking match conditions:');
-            demoUsers.forEach(user => {
-              console.log(`- ${user.username}: username match=${user.username === email.trim()}, contact match=${user.contact_number === email.trim()}, password match=${user.password === password}`);
-            });
+            usedDemoUser = true;
           }
         }
 
@@ -241,20 +239,9 @@ function LoginScreen({ navigation }: { navigation: any }) {
             const userRole = response.user?.role || response.role;
             console.log('User role:', userRole);
             
-            // Fix role mapping for aanganwadi_worker
-            let normalizedRole = userRole;
-            if (userRole === 'aanganwadi_worker') {
-              normalizedRole = 'aanganwadi';
-            }
-            
-            switch (normalizedRole) {
+            switch (userRole) {
               case 'admin':
-                console.log('🚀 Navigating to AdminDashboard with admin user data:', user);
-                navigation.navigate('AdminDashboard', {
-                  userData: user,
-                  userId: user.username,
-                  name: user.name,
-                });
+                Alert.alert('Admin dashboard is disabled.');
                 break;
               case 'aanganwadi':
                 console.log('🚀 Navigating to AnganwadiDashboard with backend user data:', user);
@@ -297,12 +284,7 @@ function LoginScreen({ navigation }: { navigation: any }) {
               // If no specific role, try to determine from username or other fields
               if (response.user?.username?.toUpperCase().includes('ADMIN') || 
                   response.user?.username?.toUpperCase().includes('CGCO')) {
-                console.log('🚀 Navigating to AdminDashboard for username-based admin:', user);
-                navigation.navigate('AdminDashboard', {
-                  userData: user,
-                  userId: user.username,
-                  name: user.name,
-                });
+                Alert.alert('Admin dashboard is disabled.');
               } else if (response.user?.username?.toUpperCase().includes('ANGANWADI') || 
                          response.user?.username?.toUpperCase().includes('CGAB')) {
                 navigation.navigate('AnganwadiDashboard');
@@ -331,7 +313,7 @@ function LoginScreen({ navigation }: { navigation: any }) {
               }
               break;
           }
-        } else {
+        } else if (!usedDemoUser) {
           Alert.alert('लॉगिन विफल', (response && response.message) || 'लॉगिन में त्रुटि हुई।');
         }
       }
@@ -409,7 +391,11 @@ function LoginScreen({ navigation }: { navigation: any }) {
               mode="outlined"
               style={styles.input}
               left={<TextInput.Icon icon="account" />}
-              theme={{ colors: { primary: '#2E7D32' } }}
+              theme={customTheme}
+              textColor="#1a1a1a"
+              contentStyle={{ color: '#1a1a1a' }}
+              outlineColor="#2E7D32"
+              activeOutlineColor="#2E7D32"
             />
 
             <TextInput
@@ -426,7 +412,11 @@ function LoginScreen({ navigation }: { navigation: any }) {
                   onPress={() => setShowPassword(!showPassword)}
                 />
               }
-              theme={{ colors: { primary: '#2E7D32' } }}
+              theme={customTheme}
+              textColor="#1a1a1a"
+              contentStyle={{ color: '#1a1a1a' }}
+              outlineColor="#2E7D32"
+              activeOutlineColor="#2E7D32"
             />
 
             <Button
@@ -435,7 +425,10 @@ function LoginScreen({ navigation }: { navigation: any }) {
               loading={loading}
               style={styles.loginButton}
               buttonColor="#2E7D32"
+              textColor="#FFFFFF"
               contentStyle={styles.loginButtonContent}
+              labelStyle={{ color: '#FFFFFF', fontWeight: '600' }}
+              theme={customTheme}
             >
               {loading ? 'लॉगिन हो रहा है...' : 'लॉगिन करें'}
             </Button>
@@ -454,7 +447,7 @@ function LoginScreen({ navigation }: { navigation: any }) {
 
 export default function App() {
   return (
-    <PaperProvider>
+    <PaperProvider theme={customTheme}>
       <SafeAreaProvider>
         <NavigationContainer
           onStateChange={(state) => {
@@ -469,7 +462,6 @@ export default function App() {
             }}
           >
             <Stack.Screen name="Login" component={LoginScreen} />
-            <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
             <Stack.Screen name="AnganwadiDashboard" component={AnganwadiDashboard} />
             <Stack.Screen name="FamilyDashboard" component={FamilyDashboard} />
             <Stack.Screen name="UploadPhoto" component={UploadPhotoScreen as any} />
@@ -583,6 +575,8 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     marginBottom: 8,
     textAlign: 'center',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   loginSubtitle: {
     fontSize: 15,
@@ -590,11 +584,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 32,
     lineHeight: 22,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   input: {
     marginBottom: 20,
     backgroundColor: '#ffffff',
     borderRadius: 12,
+    color: '#1a1a1a',
   },
   loginButton: {
     borderRadius: 12,
@@ -619,6 +616,8 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
     marginBottom: 4,
     textAlign: 'center',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   ssimptText: {
     fontSize: 16,
@@ -629,5 +628,7 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
 });

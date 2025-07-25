@@ -87,9 +87,6 @@ const apiService = {
   getPhoto: async (mobile: string, name: string): Promise<{plant_photo: string | null, pledge_photo: string | null}> => {
     let url = `${API_BASE_URL}/get_photo`;
 
-    console.log("FETCHING PHOTO URL:", url);
-    console.log("POST data:", { mobile, name });
-
     try {
       const formData = new FormData();
       formData.append('mobile', mobile);
@@ -99,40 +96,25 @@ const apiService = {
         method: 'POST',
         body: formData
       });
-      
-      if (!response.ok) {
-        console.log(`Photo fetch failed with status: ${response.status}`);
+
+      const contentType = response.headers.get('content-type') || '';
+
+      if (response.ok && contentType.startsWith('image/')) {
+        // If image is returned, create a blob URL
+        const blob = await response.blob();
+        const photoUrl = URL.createObjectURL(blob);
+        return { plant_photo: photoUrl, pledge_photo: null };
+      } else if (contentType.includes('application/json')) {
+        // If JSON, parse as usual
+        const data = await response.json();
+        // ...existing logic for JSON response...
         return { plant_photo: null, pledge_photo: null };
-      }
-      
-      const data = await response.json();
-      console.log("RECEIVED PHOTO DATA:", data);
-      
-      // Backend returns array with photo data
-      if (Array.isArray(data) && data.length > 0 && data[0]) {
-        const photoData = data[0];
-        
-        let plantPhotoUrl = null;
-        let pledgePhotoUrl = null;
-        
-        if (photoData.plant_photo) {
-          plantPhotoUrl = `${API_BASE_URL}/static/${photoData.plant_photo}`;
-          console.log('✅ Plant photo URL constructed:', plantPhotoUrl);
-        }
-        
-        if (photoData.pledge_photo) {
-          pledgePhotoUrl = `${API_BASE_URL}/static/${photoData.pledge_photo}`;
-          console.log('✅ Pledge photo URL constructed:', pledgePhotoUrl);
-        }
-        
-        return { plant_photo: plantPhotoUrl, pledge_photo: pledgePhotoUrl };
       } else {
-        console.log('No photos found for this student');
+        // Unknown response
         return { plant_photo: null, pledge_photo: null };
       }
     } catch (error: any) {
       console.error('ERROR FETCHING PHOTO:', error);
-      console.log('⚠️ Photo fetch failed:', error.message);
       return { plant_photo: null, pledge_photo: null };
     }
   },
@@ -358,24 +340,17 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
       const data = await apiService.searchFamilies(query, signal);
       console.log('✅ Real search data received:', data);
       
-      // Fetch photos for all students
+      // Fetch photos for all students (try /get_photo first, fallback to /families/user/<username> if missing)
       console.log('📸 Starting to fetch photos for', data.length, 'students...');
       const familiesWithPhotos = await Promise.all(
         data.map(async (family, index) => {
           try {
-            // Check if mobile number and child name are valid before making API call
             if (!family.mobileNumber || family.mobileNumber === 'null' || !family.childName) {
               console.log(`⚠️ [${index + 1}/${data.length}] Skipping ${family.childName} - Missing mobile number or name`);
-              console.log(`   Mobile: ${family.mobileNumber}, Name: ${family.childName}`);
-              return family; // Return family without photo if data is incomplete
+              return family;
             }
-
-            // Create cache key with refresh trigger to force reload
             const cacheKey = `${family.mobileNumber}_${family.childName}_${photoRefreshTrigger}`;
-            
-            // Check cache first
             if (photoCache[cacheKey]) {
-              console.log(`🎯 [${index + 1}/${data.length}] Using cached photos for: ${family.childName}`);
               const cachedPhotos = photoCache[cacheKey];
               return {
                 ...family,
@@ -383,31 +358,66 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                 pledge_photo: cachedPhotos.pledge_photo || undefined
               };
             }
-
-            console.log(`🔍 [${index + 1}/${data.length}] Fetching fresh photos for: ${family.childName} (${family.mobileNumber})`);
-            const photoData = await apiService.getPhoto(family.mobileNumber, family.childName);
-            
+            // Try /get_photo first
+            let photoData = await apiService.getPhoto(family.mobileNumber, family.childName);
+            // If no plant_photo, fallback to /families/user/<username>
+            if (!photoData.plant_photo && family.mobileNumber) {
+              try {
+                const url = `${API_BASE_URL}/families/user/${family.mobileNumber}`;
+                const resp = await fetch(url);
+                if (resp.ok) {
+                  const details = await resp.json();
+                  // Always force photo URLs to use the current API_BASE_URL
+                  if (details && details.plant_photo) {
+                    let url = details.plant_photo;
+                    if (url.startsWith('http')) {
+                      // Replace any domain with current API_BASE_URL
+                      try {
+                        const u = new URL(url);
+                        url = `${API_BASE_URL}${u.pathname}${u.search || ''}`;
+                      } catch (e) {
+                        // fallback: use as is
+                      }
+                    } else {
+                      url = `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+                    }
+                    photoData.plant_photo = url;
+                  }
+                  if (details && details.pledge_photo) {
+                    let url = details.pledge_photo;
+                    if (url.startsWith('http')) {
+                      try {
+                        const u = new URL(url);
+                        url = `${API_BASE_URL}${u.pathname}${u.search || ''}`;
+                      } catch (e) {
+                        // fallback: use as is
+                      }
+                    } else {
+                      url = `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+                    }
+                    photoData.pledge_photo = url;
+                  }
+                }
+              } catch (err) {
+                console.log(`⚠️ [${index + 1}/${data.length}] Fallback photo fetch failed for ${family.childName}:`, err);
+              }
+            }
             if (photoData.plant_photo || photoData.pledge_photo) {
-              console.log(`✅ [${index + 1}/${data.length}] Photos found for ${family.childName}:`, photoData);
-              
-              // Cache both photos
               setPhotoCache(prev => ({
                 ...prev,
                 [cacheKey]: photoData
               }));
-              
               return {
                 ...family,
                 plant_photo: photoData.plant_photo || undefined,
                 pledge_photo: photoData.pledge_photo || undefined
               };
             } else {
-              console.log(`❌ [${index + 1}/${data.length}] No photos found for ${family.childName}`);
               return family;
             }
           } catch (error) {
             console.log(`⚠️ [${index + 1}/${data.length}] Could not fetch photo for ${family.childName}:`, error);
-            return family; // Return family without photo if fetch fails
+            return family;
           }
         })
       );
@@ -696,32 +706,16 @@ export default function SearchFamiliesScreen({ navigation }: SearchFamiliesScree
                 <Card.Content style={styles.familyCardContent}>
                   <View style={styles.familyHeader}>
                     <View style={styles.familyInfo}>
-                      {family.plant_photo ? (
-                        <View style={styles.photoSection}>
-                          <Image
-                            source={{ 
-                              uri: family.plant_photo,
-                              cache: 'reload' // Force fresh load
-                            }}
-                            style={styles.familyPhoto}
-                            onError={(e) => console.log('Family photo loading error:', e.nativeEvent.error)}
-                          />
-                          <Text style={styles.photoLabel}>
-                            {family.plant_photo.includes('plant_') ? 'पौधे की फोटो' : 'प्रतिज्ञा फोटो'}
-                          </Text>
-                        </View>
-                      ) : (
-                        <View style={styles.noPhotoSection}>
-                          <Avatar.Text
-                            size={50}
-                            label={family.childName.charAt(0)}
-                            style={{ backgroundColor: '#4CAF50' }}
-                          />
-                          <Text style={styles.noPhotoLabel}>
-                            {!family.mobileNumber || family.mobileNumber === 'null' ? 'मोबाइल नंबर नहीं' : 'फोटो नहीं'}
-                          </Text>
-                        </View>
-                      )}
+                      <View style={styles.noPhotoSection}>
+                        <Avatar.Text
+                          size={50}
+                          label={family.childName.charAt(0)}
+                          style={{ backgroundColor: '#4CAF50' }}
+                        />
+                        <Text style={styles.noPhotoLabel}>
+                          {!family.mobileNumber || family.mobileNumber === 'null' ? 'मोबाइल नंबर नहीं' : 'फोटो नहीं'}
+                        </Text>
+                      </View>
                       <View style={styles.familyDetails}>
                         <Text style={styles.childName}>{family.childName}</Text>
                         <Text style={styles.parentName}>माता/पिता: <Text>{family.parentName}</Text></Text>
